@@ -30,7 +30,7 @@ AUTH_PROVIDER_SCHEMA = vol.Schema({
     vol.Optional(CONF_NAME): str,
     # Specify ID if you have two auth providers for same type.
     vol.Optional(CONF_ID): str,
-}, extra=vol.ALLOW_EXTRA)
+})
 
 ACCESS_TOKEN_EXPIRATION = timedelta(minutes=30)
 DATA_REQS = 'auth_reqs_processed'
@@ -119,6 +119,9 @@ class AuthProvider:
         Will be used to populate info when creating a new user.
         """
         return {}
+
+    async def async_will_remove_credentials(self, credentials):
+        """Called when we're about to remove creds owned by this provider."""
 
 
 @attr.s(slots=True)
@@ -290,9 +293,13 @@ class AuthManager:
         return False
 
     @property
-    def async_auth_providers(self):
+    def auth_providers(self):
         """Return a list of available auth providers."""
         return self._providers.values()
+
+    async def async_get_users(self):
+        """Retrieve all users."""
+        return await self._store.async_get_users()
 
     async def async_get_user(self, user_id):
         """Retrieve a user."""
@@ -303,6 +310,13 @@ class AuthManager:
         return await self._store.async_create_user(
             name=name,
             system_generated=True,
+            is_active=True,
+        )
+
+    async def async_create_user(self, name):
+        """Create a system user."""
+        return await self._store.async_create_user(
+            name=name,
             is_active=True,
         )
 
@@ -317,6 +331,10 @@ class AuthManager:
             raise ValueError('Unable to find the user.')
 
         auth_provider = self._async_get_auth_provider(credentials)
+
+        if auth_provider is None:
+            raise RuntimeError('Credential with unknown provider encountered')
+
         info = await auth_provider.async_user_meta_for_credentials(
             credentials)
 
@@ -341,7 +359,19 @@ class AuthManager:
 
     async def async_remove_user(self, user):
         """Remove a user."""
+        for credentials in user.credentials:
+            provider = self._async_get_auth_provider(credentials)
+
+            if provider is None:
+                continue
+
+            await provider.async_will_remove_credentials(credentials)
+
         await self._store.async_remove_user(user)
+
+    async def async_remove_credentials(self, credentials):
+        """Remove credentials."""
+        await self._store.async_remove_credentials(credentials)
 
     async def async_create_refresh_token(self, user, client_id=None):
         """Create a new refresh token for a user."""
@@ -407,7 +437,7 @@ class AuthManager:
         """Helper to get auth provider from a set of credentials."""
         auth_provider_key = (credentials.auth_provider_type,
                              credentials.auth_provider_id)
-        return self._providers[auth_provider_key]
+        return self._providers.get(auth_provider_key)
 
 
 class AuthStore:
@@ -479,6 +509,22 @@ class AuthStore:
     async def async_remove_user(self, user):
         """Remove a user."""
         self._users.pop(user.id)
+        await self.async_save()
+
+    async def async_remove_credentials(self, credentials):
+        """Remove credentials."""
+        for user in self._users:
+            found = None
+
+            for index, cred in enumerate(user.credentials):
+                if cred is credentials:
+                    found = index
+                    break
+
+            if found is not None:
+                user.credentials.pop(found)
+                break
+
         await self.async_save()
 
     async def async_create_refresh_token(self, user, client_id=None):

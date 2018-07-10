@@ -7,14 +7,24 @@ import hmac
 import voluptuous as vol
 
 from homeassistant import auth, data_entry_flow
+from homeassistant.const import CONF_ID
 from homeassistant.exceptions import HomeAssistantError
 
 
 STORAGE_VERSION = 1
 STORAGE_KEY = 'auth_provider.homeassistant'
 
-CONFIG_SCHEMA = auth.AUTH_PROVIDER_SCHEMA.extend({
-}, extra=vol.PREVENT_EXTRA)
+
+def _disallow_id(conf):
+    """Disallow ID in config."""
+    if CONF_ID in conf:
+        raise vol.Invalid(
+            'ID is not allowed for the homeassistant auth provider.')
+
+    return conf
+
+
+CONFIG_SCHEMA = vol.All(auth.AUTH_PROVIDER_SCHEMA, _disallow_id)
 
 
 class InvalidAuth(HomeAssistantError):
@@ -85,8 +95,8 @@ class Data:
             hashed = base64.b64encode(hashed).decode()
         return hashed
 
-    def add_user(self, username, password):
-        """Add a user."""
+    def add_auth(self, username, password):
+        """Add a new authenticated user/pass."""
         if any(user['username'] == username for user in self.users):
             raise InvalidUser
 
@@ -95,8 +105,21 @@ class Data:
             'password': self.hash_password(password, True),
         })
 
+    def remove_auth(self, username):
+        """Remove authentication."""
+        index = None
+        for i, user in enumerate(self.users):
+            if user['username'] == username:
+                index = i
+                break
+
+        if index is None:
+            raise InvalidUser
+
+        self.users.pop(index)
+
     def change_password(self, username, new_password):
-        """Update the password of a user.
+        """Update the password.
 
         Raises InvalidUser if user cannot be found.
         """
@@ -141,6 +164,19 @@ class HassAuthProvider(auth.AuthProvider):
         return self.async_create_credentials({
             'username': username
         })
+
+    async def async_user_meta_for_credentials(self, credentials):
+        """Get extra info for this credential."""
+        return {
+            'name': credentials.data['username']
+        }
+
+    async def async_will_remove_credentials(self, credentials):
+        """When credentials get removed, also remove the auth."""
+        data = Data(self.hass)
+        await data.async_load()
+        data.remove_auth(credentials.data['username'])
+        await data.async_save()
 
 
 class LoginFlow(data_entry_flow.FlowHandler):
