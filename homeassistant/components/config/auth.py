@@ -1,4 +1,4 @@
-:"""Offer API to configure Home Assistant auth."""
+"""Offer API to configure Home Assistant auth."""
 from homeassistant.core import callback
 from homeassistant.components import websocket_api
 

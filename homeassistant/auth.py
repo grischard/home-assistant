@@ -314,7 +314,7 @@ class AuthManager:
         )
 
     async def async_create_user(self, name):
-        """Create a system user."""
+        """Create a user."""
         return await self._store.async_create_user(
             name=name,
             is_active=True,
